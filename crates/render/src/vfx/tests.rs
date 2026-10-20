@@ -1523,6 +1523,42 @@ mod video_denoise {
     }
 
     #[test]
+    fn show_noise_with_nothing_to_remove_shows_flat_grey_not_the_source() {
+        let env = Probe::new(flat_noisy, 0.5, 1.0);
+        let mut input = env.inner.render(0.5, 1.0);
+        let at = |x: usize, y: usize| (y * input.w + x) * 4;
+        // a half-transparent pixel (premultiplied), a transparent one that still holds a colour, and one that is not a number
+        let (half, clear, broken) = (at(20, 20), at(30, 30), at(31, 30));
+        input.px[half..half + 3].iter_mut().for_each(|v| *v *= 0.5);
+        input.px[half + 3] = 0.5;
+        input.px[clear..clear + 4].copy_from_slice(&[0.7, 0.2, 0.1, 0.0]);
+        input.px[broken] = f32::NAN;
+        let show = |level: f64| {
+            let mut e = denoise(level, level, 1.0, 50.0);
+            set(&mut e, "show_noise", ParamValue::Bool(true));
+            let mut img = input.clone();
+            crate::effects::apply(&mut img, &e, &FxCtx { seconds: 0.5, env: Some(&env), ..cx() });
+            img
+        };
+        let off = show(0.0);
+        assert_eq!(env.asked(), 0, "with nothing to filter no neighbouring frame is read");
+        // 0.05 % is just above the level the filter acts on; it matches no sample, so it removes next to nothing
+        let barely = show(0.05);
+        assert!(env.asked() > 0, "the comparison level must run the filter");
+        let pixels = off.px.as_chunks::<4>().0.iter().zip(barely.px.as_chunks::<4>().0).zip(input.px.as_chunks::<4>().0);
+        for (i, ((o, b), s)) in pixels.enumerate() {
+            let (x, y) = (i % input.w, i / input.w);
+            if [clear, broken].contains(&(i * 4)) {
+                assert!(o.iter().zip(s).all(|(a, b)| a.to_bits() == b.to_bits()), "({x},{y}) must be left alone: {o:?} for {s:?}");
+                continue;
+            }
+            assert_eq!(o[3], s[3], "alpha changed at ({x},{y})");
+            assert!(o[..3] != s[..3], "the source picture is shown at ({x},{y}): {o:?}");
+            assert!(o.iter().zip(b).all(|(a, b)| close(*a, *b, 1e-4)), "({x},{y}) is {o:?} with nothing removed but {b:?} with next to nothing removed");
+        }
+    }
+
+    #[test]
     fn preserve_detail_keeps_texture_the_filter_would_flatten() {
         let env = Probe::new(texture_noisy, 0.5, 1.0);
         let input = env.inner.render(0.5, 1.0);

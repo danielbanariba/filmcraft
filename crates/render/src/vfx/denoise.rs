@@ -370,12 +370,13 @@ pub fn video_denoise(img: &mut Image, e: &EffectInstance, cx: &FxCtx) {
         .into_iter()
         .filter(|g| g.sigma * g.sigma > MIN_VARIANCE)
         .collect();
-    if groups.is_empty() {
+    // with no group to filter, Show Only Noise still shows what was removed: nothing, a flat grey
+    if groups.is_empty() && !prm.show {
         return;
     }
     let Some(cur) = Frame::load(img) else { return };
     let mut acc: Vec<Vec<f32>> = groups.iter().map(|g| vec![0.0; cur.w * cur.h * (g.planes.len() + 1)]).collect();
-    if let Some(env) = cx.env {
+    if let Some(env) = cx.env.filter(|_| !groups.is_empty()) {
         for dt in neighbour_times(env, cx, prm.frames) {
             let Some(nb) = env.frame(dt, e).and_then(|im| Frame::load_like(&im, &cur)) else { continue };
             for (g, a) in groups.iter().zip(acc.iter_mut()) {
