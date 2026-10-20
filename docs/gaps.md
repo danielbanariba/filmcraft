@@ -1,6 +1,6 @@
 # Where FilmCraft falls short of Premiere Pro
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** major (new file: ROADMAP's "Where we are lacking" re-measured against Premiere Pro 26.5.2 and the open issue list) · **Target:** Adobe Premiere Pro 2026 (26.5.2)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-19 · **Change:** minor (G18: Video De-Noise, #2514) · **Target:** Adobe Premiere Pro 2026 (26.5.2)
 
 Every known shortfall, one entry each, ranked by what most stops an editor using FilmCraft for real
 work. This is the work list: agents should prefer it over adding checklist items. Numbers are in

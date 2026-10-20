@@ -1255,6 +1255,30 @@ mod video_denoise {
     fn texture_noisy(x: f64, y: f64, t: f64) -> [f32; 3] {
         dec(grained(texture_static(x, y), x, y, t))
     }
+    /// Two tinted halves meeting at x = 48; the left one has a negative red, as an out-of-gamut colour does.
+    fn gamut(x: f64) -> [f32; 3] {
+        if x < 48.0 { [-0.30, 0.40, 0.55] } else { [0.65, 0.45, 0.35] }
+    }
+    /// Like `dec`, with the curve mirrored around 0 so that a negative channel stays negative.
+    fn dec_mirrored(c: [f32; 3]) -> [f32; 3] {
+        let linear = dec(c.map(f32::abs));
+        std::array::from_fn(|k| linear[k].copysign(c[k]))
+    }
+    fn gamut_clean(x: f64, _: f64, _: f64) -> [f32; 3] {
+        dec_mirrored(gamut(x))
+    }
+    fn gamut_noisy(x: f64, y: f64, t: f64) -> [f32; 3] {
+        dec_mirrored(grained(gamut(x), x, y, t))
+    }
+    /// Two saturated colours meeting at x = 48. Each has one channel on the gamut boundary: its
+    /// display value is below 0, so `dec` makes it exactly 0 under any grain.
+    fn deep(x: f64) -> [f32; 3] {
+        if x < 48.0 { [-0.15, 0.30, 0.30] } else { [0.30, 0.30, -0.15] }
+    }
+    /// `deep` under the usual grain; `dec` keeps every linear channel in 0..=1.
+    fn deep_noisy(x: f64, y: f64, t: f64) -> [f32; 3] {
+        dec(grained(deep(x), x, y, t))
+    }
 
     /// A clip environment that hands back neighbouring frames at the working scale and counts how
     /// many it was asked for.
@@ -1521,6 +1545,47 @@ mod video_denoise {
         assert!(kept > open * 1.5, "texture spread: {open} with no detail kept, {kept} with all of it");
         assert!(open < half && half < kept, "texture spread at 0, 50, 100 % detail: {open} {half} {kept}");
         assert!(kept > spread(&input) * 0.9, "all detail kept should leave the picture as it was");
+    }
+
+    #[test]
+    fn negative_channels_keep_their_sign() {
+        // the left half is out of gamut: a negative linear red under the usual grain, alpha 1
+        let env = Probe::new(gamut_noisy, 0.5, 1.0);
+        let clean = render_of(gamut_clean, 0.5, 1.0);
+        let input = env.inner.render(0.5, 1.0);
+        let out = run_on(&env, &denoise(30.0, 50.0, 1.0, 50.0), 1.0);
+        let (xs, ys) = LEFT();
+        let (mut n, mut changed, mut sign_lost) = (0usize, 0usize, 0usize);
+        let (mut before, mut after) = (0.0f64, 0.0f64);
+        for y in ys {
+            for x in xs.clone() {
+                let (i, o, c) = (input.get(x, y), out.get(x, y), clean.get(x, y));
+                n += 1;
+                changed += usize::from(o[0] != i[0]);
+                sign_lost += usize::from(o[0] >= 0.0);
+                before += f64::from((i[0] - c[0]).abs());
+                after += f64::from((o[0] - c[0]).abs());
+            }
+        }
+        // the red channel really went through the filter, so a pass-through cannot satisfy the rest
+        assert!(changed * 2 > n, "the filter changed the red of only {changed} of {n} pixels");
+        let clean_red = clean.get(xs.start, 8)[0];
+        assert_eq!(sign_lost, 0, "{sign_lost} of {n} pixels lost the sign of their red (clean value {clean_red})");
+        let (before, after) = (before / n as f64, after / n as f64);
+        assert!(after < before, "red error {before} -> {after} (clean value {clean_red})");
+    }
+
+    #[test]
+    fn in_gamut_input_never_comes_out_negative() {
+        let env = Probe::new(deep_noisy, 0.5, 1.0);
+        let input = env.inner.render(0.5, 1.0);
+        assert!(input.px.iter().all(|v| *v >= 0.0), "the scene must be in gamut");
+        let out = run_on(&env, &denoise(30.0, 50.0, 1.0, 50.0), 1.0);
+        let changed = out.px.iter().zip(&input.px).filter(|(o, i)| o != i).count();
+        assert!(changed * 2 > out.px.len(), "the filter changed only {changed} of {} values", out.px.len());
+        // luma and the colour differences are averaged apart, so their sum can undershoot 0 by itself
+        let below: Vec<(usize, f32)> = out.px.iter().copied().enumerate().filter(|(_, v)| *v < 0.0).collect();
+        assert!(below.is_empty(), "{} of {} channels came out below 0, first (index, value): {:?}", below.len(), out.px.len(), below.first());
     }
 
     #[test]

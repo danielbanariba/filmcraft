@@ -19,6 +19,7 @@
 //! differences are two groups, each with its own noise level (the Luma and Chroma Noise Level
 //! parameters, 100 % = 0.10 in display units) and its own weights, so a neighbour that matches in
 //! colour but not in brightness still helps the colour. A level of 0 leaves its group untouched.
+//! The sRGB curve is mirrored around 0, so a negative (out-of-gamut) channel keeps its sign.
 //!
 //! Two samples of the same signal differ by `2 s²` on average (`s` = the noise level), so a patch
 //! distance up to that counts as a perfect match; beyond it the weight falls off exponentially.
@@ -158,11 +159,12 @@ struct Frame {
     a: Plane,
 }
 
+/// The sRGB curve mirrored around 0, so an out-of-gamut (negative) channel keeps its sign.
 fn to_display(v: f32) -> f32 {
-    linear_to_srgb(v.max(0.0))
+    linear_to_srgb(v.abs()).copysign(v)
 }
 fn to_linear(v: f32) -> f32 {
-    srgb_to_linear(v.max(0.0))
+    srgb_to_linear(v.abs()).copysign(v)
 }
 /// Straight display-encoded `(Y', B' - Y', R' - Y')` and alpha of a premultiplied linear pixel.
 /// Pixels that are transparent or not numbers come out with alpha 0 and are left alone.
@@ -411,7 +413,11 @@ pub fn video_denoise(img: &mut Image, e: &EffectInstance, cx: &FxCtx) {
         } else {
             synthesise(result)
         };
-        let [lr, lg, lb] = shown.map(|v| to_linear(v) * a);
-        (*r, *g, *b) = (lr, lg, lb);
+        // Luma and colour differences are averaged apart, so their sum can undershoot 0 where the
+        // input did not: only a channel that was already negative keeps a negative result.
+        for (slot, v) in [r, g, b].into_iter().zip(shown) {
+            let linear = to_linear(v) * a;
+            *slot = if *slot < 0.0 { linear } else { linear.max(0.0) };
+        }
     });
 }
